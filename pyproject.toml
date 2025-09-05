@@ -1,0 +1,14 @@
+[project]
+name = "agent-financial-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "agno>=1.8.1",
+    "google>=3.0.0",
+    "google-api-python-client>=2.181.0",
+    "google-auth-httplib2>=0.2.0",
+    "groq>=0.31.1",
+    "pandas>=2.3.2",
+]
