@@ -5,14 +5,15 @@
 from agno.agent import Agent
 from agno.tools.googlesheets import GoogleSheetsTools
 from agno.models.groq import Groq
+from agno.storage.sqlite import SqliteStorage
+from agno.playground import Playground, serve_playground_app
 
-import pandas as pd
 import json
 import csv
 import os
 from io import StringIO
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv # load environment variables
 load_dotenv()
 
 #############################################################################################################
@@ -145,6 +146,21 @@ def calculate_total_expenses_per_category(data, category: str = ""):
 
     return expenses_per_category
 
+def filter_data_by_category(data, category: str = "", category_value: str = ""):
+
+    """
+    Filter the data by the specified category.
+    """
+
+    header = data[0]
+    category_idx = header.index(category) # Assuming {category} is the header for the category column
+
+    filtered = [
+        row for row in data[1:] if len(row) > category_idx and row[category_idx] == category_value
+    ]
+
+    return [header] + filtered
+
 def analyze_expenses_by_category(month: str = "", category: str = ""):
 
     """
@@ -163,28 +179,57 @@ def analyze_expenses_by_category(month: str = "", category: str = ""):
 
     return dict_expenses_per_category
 
-def analyze_itens_for_category(month: str = "", category: str = ""):
+def analyze_itens_for_category(month: str = "", category: str = "", category_value: str = ""):
 
-    ...
+    """
+    Use this function to reads the data, cleans it, filter by the specified month and category. And calculate the total expenses per item.
+
+    Args:
+        month (str): Month to filter the data by, in "MM" format.
+        category (str): Category to filter the data by: ["Data", "Categoria", "Tipo_de_gasto", "Fonte", "Sub_fonte", "Local"]
+        category_value (str): Value of the category to filter the data by.
+            
+    Returns:
+        List: Dictionary with items as keys and total expenses as values.
+    """
+
+    list_of_list_data_expenses = get_list_data_month_google_sheets(month)
+    filtered_data = filter_data_by_category(list_of_list_data_expenses, category, category_value)
+    dict_expenses_per_item = calculate_total_expenses_per_category(filtered_data, "Item")
+
+    return dict_expenses_per_item
 
 #############################################################################################################
 # Agent Setup
 #############################################################################################################
 
+db = SqliteStorage(table_name = "personal_finance_control", db_file = "tpm/financial_data.db")
+
 agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
-    tools=[
-        analyze_expenses_by_category
+    name = "Financial Personal Analyst",
+    model = Groq(id="llama-3.3-70b-versatile"),
+    tools = [
+        analyze_expenses_by_category,
+        analyze_itens_for_category
     ],
-    instructions=[
+    instructions = [
         "You are a financial personal analyst helping users to understand their financial data.",
         "Give simple responses, in a nutshell, format in markdown and use tables to display data where possible.",
     ],
-    show_tool_calls=True,
-    debug_mode=True
+    storage = db,
+    add_history_to_messages = True,
+    show_tool_calls = True,
+    num_history_runs = 5,
+    debug_mode = True
 )
 
+app = Playground(agents = [
+    agent
+]).get_app()
 
-agent.print_response("Analyze my current expenses in September by items. Use the tools to get the data from my Google Sheets and calculate the total expenses per group selected. Format the response in a table and give me insights about my expenses and how can I save more.",
+if __name__ == "__main__":
+    serve_playground_app("_project_gsheet:app", reload = True)
+
+'''agent.print_response("Analyze my current expenses in September by items. Use the tools to get the data from my Google Sheets and calculate the total expenses per group selected. Format the response in a table and give me insights about my expenses and how can I save more.",
                      markdown=True,
-                     stream=True)
+                     stream=True)'''
