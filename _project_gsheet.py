@@ -5,8 +5,9 @@
 from agno.agent import Agent
 from agno.tools.googlesheets import GoogleSheetsTools
 from agno.models.groq import Groq
-from agno.storage.sqlite import SqliteStorage
-from agno.playground import Playground, serve_playground_app
+from agno.models.openai import OpenAIChat
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 
 import json
 import csv
@@ -17,7 +18,7 @@ from dotenv import load_dotenv # load environment variables
 load_dotenv()
 
 #############################################################################################################
-# Google Sheets Setup Tools https://docs.agno.com/tools/toolkits/others/google_sheets
+# Google Sheets Setup Tools https://docs.agno.com/concepts/tools/toolkits/others/google_sheets
 #############################################################################################################
 
 SAMPLE_SPREADSHEET_ID = os.getenv("SAMPLE_SPREADSHEET_ID")
@@ -107,28 +108,28 @@ def get_list_data_month_google_sheets(month: str = ""):
 
     return filtered_data
 
-def calculate_total_expenses_per_category(data, category: str = ""):
+def calculate_total_expenses_per_column(data, column_name: str = ""):
 
     """
-    Calculate the total expenses per category from the provided data.
+    Calculate the total expenses per column from the provided data.
 
     Args:
         data (List): The data containing expenses.
-        category (str): Category to select in the data
+        column_name (str): Column to select in the data
 
     Returns:
         Dict: A dictionary with categories as keys and total expenses as values.
     """
 
     header = data[0]
-    category_idx = header.index(category) # Assuming {category} is the header for the category column
+    column_name_idx = header.index(column_name) # Assuming {column_name} is the header for the column to analyze
     amount_idx = header.index("Valor_total") # Assuming "Valor_total" is the header for the amount column
 
-    expenses_per_category = {}
+    expenses_per_column = {}
 
     for row in data[1:]:
-        if len(row) > max(category_idx, amount_idx):
-            category = row[category_idx]
+        if len(row) > max(column_name_idx, amount_idx):
+            column_name = row[column_name_idx]
             try:
                 # Clean values and convert to float
                 row[amount_idx] = row[amount_idx].replace(" ", "").replace("R$", "").replace(".", "").replace(",", ".").strip()
@@ -136,66 +137,65 @@ def calculate_total_expenses_per_category(data, category: str = ""):
             except ValueError:
                 amount = 0.0
 
-            if category in expenses_per_category:
-                expenses_per_category[category] += amount
+            if column_name in expenses_per_column:
+                expenses_per_column[column_name] += amount
             else:
-                expenses_per_category[category] = amount
+                expenses_per_column[column_name] = amount
 
     # order the dict by value desc
-    expenses_per_category = dict(sorted(expenses_per_category.items(), key=lambda item: item[1], reverse=True))
+    expenses_per_column = dict(sorted(expenses_per_column.items(), key=lambda item: item[1], reverse=True))
 
-    return expenses_per_category
+    return expenses_per_column
 
-def filter_data_by_category(data, category: str = "", category_value: str = ""):
+def filter_data_by_categorical_value(data, categorical_value: str = ""):
 
     """
-    Filter the data by the specified category.
+    Filter the data by the specified category value in 'Categoria' column.
     """
 
     header = data[0]
-    category_idx = header.index(category) # Assuming {category} is the header for the category column
+    category_idx = header.index("Categoria") # Assuming {category} is the header for the category column
 
     filtered = [
-        row for row in data[1:] if len(row) > category_idx and row[category_idx] == category_value
+        row for row in data[1:] if len(row) > category_idx and row[category_idx] == categorical_value
     ]
 
     return [header] + filtered
 
-def analyze_expenses_by_category(month: str = "", category: str = ""):
+def analyze_expenses_by_column(month: str = "", column_name: str = ""):
 
     """
-    Use this function to reads the data, cleans it, filter by the specified month. And calculate the total expenses per category.
+    Use this function to reads the data, cleans it, filter by the specified month. And calculate the total expenses per Column chose by the user.
 
     Args:
         month (str): Month to filter the data by, in "MM" format.
-        category (str): Category to filter the data by: ["Data", "Categoria", "Tipo_de_gasto", "Fonte", "Sub_fonte", "Local", "Item"]
+        column_name (str): Column to filter the data by: ["Data", "Categoria", "Tipo_de_gasto", "Fonte", "Sub_fonte", "Local", "Item"]
 
     Returns:
         List: Dictionary with categories as keys and total expenses as values.
     """
 
     list_of_list_data_expenses = get_list_data_month_google_sheets(month)
-    dict_expenses_per_category = calculate_total_expenses_per_category(list_of_list_data_expenses, category)
+    dict_expenses_per_column = calculate_total_expenses_per_column(list_of_list_data_expenses, column_name)
 
-    return dict_expenses_per_category
+    return dict_expenses_per_column
 
-def analyze_itens_for_category(month: str = "", category: str = "", category_value: str = ""):
+def analyze_expenses_per_items_for_category_column(month: str = "", categorical_value: str = ""):
 
     """
-    Use this function to reads the data, cleans it, filter by the specified month and category. And calculate the total expenses per item.
+    Use this function to reads the data, cleans it, filter by the specified month and Categoria. And calculate the total expenses per item.
 
     Args:
         month (str): Month to filter the data by, in "MM" format.
-        category (str): Category to filter the data by: ["Data", "Categoria", "Tipo_de_gasto", "Fonte", "Sub_fonte", "Local"]
-        category_value (str): Value of the category to filter the data by.
+        categorical_value (str): Category value to filter the data in "Categoria" column
             
     Returns:
         List: Dictionary with items as keys and total expenses as values.
     """
 
     list_of_list_data_expenses = get_list_data_month_google_sheets(month)
-    filtered_data = filter_data_by_category(list_of_list_data_expenses, category, category_value)
-    dict_expenses_per_item = calculate_total_expenses_per_category(filtered_data, "Item")
+    filtered_data = filter_data_by_categorical_value(list_of_list_data_expenses, categorical_value)
+    dict_expenses_per_item = calculate_total_expenses_per_column(filtered_data, "Item")
 
     return dict_expenses_per_item
 
@@ -203,33 +203,29 @@ def analyze_itens_for_category(month: str = "", category: str = "", category_val
 # Agent Setup
 #############################################################################################################
 
-db = SqliteStorage(table_name = "personal_finance_control", db_file = "tpm/financial_data.db")
+db = SqliteDb(db_file = "tpm/financial_data.db")
 
 agent = Agent(
     name = "Financial Personal Analyst",
-    model = Groq(id="llama-3.3-70b-versatile"),
+    # model = Groq(id="llama-3.3-70b-versatile"),
+    model = OpenAIChat(id="gpt-5-nano-2025-08-07"),
     tools = [
-        analyze_expenses_by_category,
-        analyze_itens_for_category
+        analyze_expenses_by_column,
+        analyze_expenses_per_items_for_category_column
     ],
     instructions = [
         "You are a financial personal analyst helping users to understand their financial data.",
         "Give simple responses, in a nutshell, format in markdown and use tables to display data where possible.",
     ],
-    storage = db,
-    add_history_to_messages = True,
-    show_tool_calls = True,
+    db = db,
+    add_history_to_context = True,
     num_history_runs = 5,
     debug_mode = True
 )
 
-app = Playground(agents = [
-    agent
-]).get_app()
-
-if __name__ == "__main__":
-    serve_playground_app("_project_gsheet:app", reload = True)
-
-'''agent.print_response("Analyze my current expenses in September by items. Use the tools to get the data from my Google Sheets and calculate the total expenses per group selected. Format the response in a table and give me insights about my expenses and how can I save more.",
+agent.print_response("Analyze my current expenses in October per items on Categoria Lazer. " \
+                     "Return insights about my spending habits (my income is R$ 6.100,00). " \
+                     "Use the tools to get the data from my Google Sheets and calculate the total expenses per group selected. " \
+                     "Format the response in a table.",
                      markdown=True,
-                     stream=True)'''
+                     stream=True)
